@@ -1,0 +1,7 @@
+{
+  "approve": "早班放行单 QC-01",
+  "hold": "白班暂扣单 QC-02",
+  "release": {"decision": "晚班解除及更正单 QC-03", "quantity": 11, "origin": ["复测更正单", 3]},
+  "early_adjustment": {"delta": 2, "origin": ["早班核账单", 2]},
+  "offline_adjustment": {"delta": 1, "origin": ["白班核账单", 4]}
+}

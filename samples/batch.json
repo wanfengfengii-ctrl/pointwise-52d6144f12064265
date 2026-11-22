@@ -1,0 +1,8 @@
+{
+  "station": "清湾北站",
+  "day": "2025-04-16",
+  "batch": "北站早班实收",
+  "samples": [
+    {"number": "K", "quantity": 7, "unit": "L", "origin": ["北站采样原单", 1]}
+  ]
+}
