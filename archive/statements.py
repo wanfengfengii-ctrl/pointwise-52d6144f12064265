@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from intake.observations import SampleCredential, StationDay
 from intake.origins import ReadingOrigin
+from ledger.vouchers import AdjustmentVoucher
 
 
 @dataclass(frozen=True)
@@ -19,6 +20,7 @@ class ClosedLine:
     origin: ReadingOrigin
     adjustments: tuple[ClosedAdjustment, ...]
     total: int
+    incorporated: tuple[AdjustmentVoucher, ...] = ()
 
 
 @dataclass(frozen=True)

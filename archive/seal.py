@@ -14,7 +14,8 @@ class SealRejected(ValueError):
 def _close_line(line: DailyLine) -> ClosedLine:
     entries = tuple(ClosedAdjustment(item.adjustment_id, item.credential, item.delta, item.origin)
                     for item in line.adjustments)
-    return ClosedLine(line.row.credential, line.row.quantity, line.row.origin, entries, line.total)
+    return ClosedLine(line.row.credential, line.row.quantity, line.row.origin, entries,
+                      line.total, line.incorporated)
 
 
 def seal(connection: sqlite3.Connection, station_day: StationDay) -> int:

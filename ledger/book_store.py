@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from exchange.envelope import SupplyRow, row_from_record, row_record
 from intake.observations import StationDay, credential_from_record, credential_record
 from ledger.eligibility import Eligibility
+from ledger.vouchers import AdjustmentVoucher, voucher_from_record, voucher_record
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,7 @@ class BookState:
     issue_id: int
     rows: tuple[SupplyRow, ...]
     eligibility: Eligibility
+    incorporated: tuple[AdjustmentVoucher, ...] = ()
 
 
 def initialize_book_store(connection: sqlite3.Connection) -> None:
@@ -35,6 +37,15 @@ def initialize_book_store(connection: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS adjustment_by_original
             ON adjustments(station, day, batch_sequence, position, number, adjustment_id);
+        CREATE TABLE IF NOT EXISTS branch_identity (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            branch_id TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS book_incorporations (
+            station TEXT NOT NULL, day TEXT NOT NULL, incorporated TEXT NOT NULL,
+            PRIMARY KEY (station, day),
+            FOREIGN KEY (station, day) REFERENCES books(station, day)
+        );
     ''')
 
 
@@ -50,6 +61,12 @@ def book_transaction(connection: sqlite3.Connection, *, write: bool = True):
         raise
 
 
+def read_branch_id(connection: sqlite3.Connection) -> str | None:
+    stored = connection.execute(
+        'SELECT branch_id FROM branch_identity WHERE singleton=1').fetchone()
+    return None if stored is None else stored[0]
+
+
 def read_book_state(connection: sqlite3.Connection, station_day: StationDay) -> BookState | None:
     stored = connection.execute('''
         SELECT revision, issue_id, rows, eligibility FROM books WHERE station=? AND day=?
@@ -57,9 +74,15 @@ def read_book_state(connection: sqlite3.Connection, station_day: StationDay) -> 
     if stored is None:
         return None
     revision, issue_id, rows, eligible = stored
+    basis = connection.execute('''
+        SELECT incorporated FROM book_incorporations WHERE station=? AND day=?
+    ''', station_day.key).fetchone()
+    incorporated = () if basis is None else tuple(
+        voucher_from_record(item) for item in json.loads(basis[0]))
     return BookState(station_day, revision, issue_id,
                      tuple(row_from_record(row) for row in json.loads(rows)),
-                     Eligibility(frozenset(credential_from_record(row) for row in json.loads(eligible))))
+                     Eligibility(frozenset(credential_from_record(row) for row in json.loads(eligible))),
+                     incorporated)
 
 
 def replace_book_state(connection: sqlite3.Connection, book: BookState) -> None:
@@ -72,3 +95,8 @@ def replace_book_state(connection: sqlite3.Connection, book: BookState) -> None:
     ''', (*book.station_day.key, book.revision, book.issue_id,
           json.dumps([row_record(row) for row in book.rows]),
           json.dumps([credential_record(value) for value in eligible])))
+    connection.execute('''
+        INSERT INTO book_incorporations VALUES (?, ?, ?)
+        ON CONFLICT(station, day) DO UPDATE SET incorporated=excluded.incorporated
+    ''', (*book.station_day.key,
+          json.dumps([voucher_record(item) for item in book.incorporated])))

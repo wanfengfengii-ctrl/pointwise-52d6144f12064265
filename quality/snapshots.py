@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from intake.batch_store import read_observation
 from intake.observations import (SampleCredential, StationDay, quantity_from_record,
                                  quantity_record)
-from intake.origins import origin_from_record, origin_record, valid_index
+from intake.origins import ReadingOrigin, origin_from_record, origin_record, valid_index
+from ledger.vouchers import AdjustmentVoucher
 from quality.disposition import Disposition, QualityOperation
 
 
@@ -27,6 +28,16 @@ def initialize_revision_store(connection: sqlite3.Connection) -> None:
             station TEXT NOT NULL, day TEXT NOT NULL, revision INTEGER NOT NULL,
             dispositions TEXT NOT NULL, operations TEXT NOT NULL,
             PRIMARY KEY (station, day, revision),
+            FOREIGN KEY (station, day) REFERENCES station_days(station, day)
+        )
+    ''')
+    connection.execute('''
+        CREATE TABLE IF NOT EXISTS incorporations (
+            station TEXT NOT NULL, day TEXT NOT NULL, revision INTEGER NOT NULL,
+            branch_id TEXT NOT NULL, adjustment_id INTEGER NOT NULL,
+            batch_sequence INTEGER NOT NULL, position INTEGER NOT NULL, number TEXT NOT NULL,
+            delta TEXT NOT NULL, document TEXT NOT NULL, line INTEGER NOT NULL,
+            PRIMARY KEY (station, day, branch_id, adjustment_id),
             FOREIGN KEY (station, day) REFERENCES station_days(station, day)
         )
     ''')
@@ -93,3 +104,38 @@ def record_snapshot(connection: sqlite3.Connection, snapshot: QualitySnapshot) -
         *snapshot.station_day.key, snapshot.revision, json.dumps(dispositions),
         json.dumps(operations),
     ))
+
+
+def record_incorporation(connection: sqlite3.Connection, station_day: StationDay,
+                         revision: int, voucher: AdjustmentVoucher) -> None:
+    connection.execute('INSERT INTO incorporations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', (
+        *station_day.key, revision, voucher.branch_id, voucher.adjustment_id,
+        *voucher.credential.order, voucher.credential.number,
+        quantity_record(voucher.delta), voucher.origin.document, voucher.origin.line,
+    ))
+
+
+def _voucher_row(station_day: StationDay, row: tuple) -> AdjustmentVoucher:
+    branch_id, adjustment_id, sequence, position, number, delta, document, line = row
+    credential = SampleCredential(station_day, sequence, position, number)
+    return AdjustmentVoucher(branch_id, adjustment_id, credential,
+                             quantity_from_record(delta), ReadingOrigin(document, line))
+
+
+def read_incorporation(connection: sqlite3.Connection, station_day: StationDay,
+                       branch_id: str, adjustment_id: int) -> AdjustmentVoucher | None:
+    stored = connection.execute('''
+        SELECT branch_id, adjustment_id, batch_sequence, position, number, delta, document, line
+        FROM incorporations WHERE station=? AND day=? AND branch_id=? AND adjustment_id=?
+    ''', (*station_day.key, branch_id, adjustment_id)).fetchone()
+    return None if stored is None else _voucher_row(station_day, stored)
+
+
+def read_incorporation_basis(connection: sqlite3.Connection, station_day: StationDay,
+                             revision: int) -> tuple[AdjustmentVoucher, ...]:
+    rows = connection.execute('''
+        SELECT branch_id, adjustment_id, batch_sequence, position, number, delta, document, line
+        FROM incorporations WHERE station=? AND day=? AND revision<=?
+        ORDER BY revision, rowid
+    ''', (*station_day.key, revision))
+    return tuple(_voucher_row(station_day, row) for row in rows)
